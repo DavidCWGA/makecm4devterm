@@ -7,7 +7,7 @@ This script needs to run on a 64-bit ARM machine. You can run it on a Raspberry 
 
 ## Usage
 
-Go to the "all download options" page at raspberry.com (at the time of writing, at https://www.raspberrypi.com/software/operating-systems/), find the 64-bit "Raspberry Pi OS with desktop" image, and copy the Download URL. (You can also download the image if you prefer, but do not decompress it.)
+Go to the "all download options" page at raspberrypi.com (at the time of writing, at https://www.raspberrypi.com/software/operating-systems/), find the 64-bit "Raspberry Pi OS with desktop" image, and copy the Download URL. (You can also download the image if you prefer, but do not decompress it.)
 
 Run the script using the URL of the image, or the path of the downloaded image, as the first argument.
 
@@ -31,7 +31,7 @@ After booting your DevTerm, if the printer doesn't show up as an available devic
 sudo dpkg-reconfigure devterm-thermal-printer-cm4 devterm-thermal-printer-cups
 ```
 
-This script is not guranteed to work on versions of Raspberry Pi OS based on Debian 12. At the time of writing, these don't exist yet.
+This script is not guaranteed to work on versions of Raspberry Pi OS based on Debian 12. At the time of writing, these don't exist yet.
 
 David Glover-Aoki
 david@gloveraoki.net

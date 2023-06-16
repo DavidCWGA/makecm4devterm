@@ -1,0 +1,8 @@
+1.0:
+* Initial release
+
+1.1:
+* X11 and LightDM modifications are skipped if X11 or LightDM are not found. This should allow use with the "Lite" OS image, but only in theory. In practice, the lite image doesn't have enough free space to install the extra packages. A problem for a future version.
+* Removed use of "curl" which is not always installed by default, use "wget" instead.
+* Fixed typos in readme.
+* Added changelog.txt.
