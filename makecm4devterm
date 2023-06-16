@@ -1,0 +1,157 @@
+#!/bin/bash
+set -euo pipefail
+
+# makecm4devterm
+#
+# David Glover-Aoki david@gloveraoki.net
+#
+# This script modifies Raspberry Pi OS 64-bit images to work on the Clockwork
+# DevTerm CM4.
+# This script is distributed under the terms of the GNU General Public License,
+# version 3.0 or later.
+#
+# It must be run on a Debian or Debian-like aarch64 system, such as a Raspberry
+# Pi, or a virtual machine running on an ARM system such as an Apple Silicon
+# Mac.
+#
+# Usage: makecm4devterm <URL or filename of image>
+# Example: makecm4devterm https://downloads.raspberrypi.org/raspios_arm64/images/raspios_arm64-2023-05-03/2023-05-03-raspios-bullseye-arm64.img.xz
+# Example: makecm4devterm ~/Downloads/2023-05-03-raspios-bullseye-arm64.img.xz
+
+function processroot {
+	rootpath="$1"
+	echo "Creating bind mounts"
+	mount --bind /dev "$rootpath/dev/"
+	mount --bind /sys "$rootpath/sys/"
+	mount --bind /proc "$rootpath/proc/"
+	mount --bind /dev/pts "$rootpath/dev/pts"
+	echo "Configuring GNOME screen rotation"
+	mkdir -p "$rootpath/etc/skel/.config"
+	cat <<EOF >"$rootpath/etc/skel/.config/monitors.xml"
+		<monitors version="2">
+			<configuration>
+				<logicalmonitor>
+					<x>0</x>
+					<y>0</y>
+					<primary>yes</primary>
+					<monitor>
+						<monitorspec>
+							<connector>DSI-1</connector>
+							<vendor>unknown</vendor>
+							<product>unknown</product>
+							<serial>unknown</serial>
+						</monitorspec>
+						<mode>
+							<width>480</width>
+							<height>1280</height>
+							<rate>60.000</rate>
+						</mode>
+					</monitor>
+					<transform>
+						<rotation>right</rotation>
+					</transform>
+				</logicalmonitor>
+			</configuration>
+		</monitors>
+EOF
+	for d in "$rootpath/home/"* ; do
+		mkdir -p "$d/.config"
+		cp "$rootpath/etc/skel/.config/monitors.xml" "$d/.config/monitors.xml"
+		owner_id=$(stat -c '%u' "$d")
+		chown -R $owner_id "$d/.config"
+	done
+	echo "Installing ClockworkPi apt key"
+	curl -sS "https://raw.githubusercontent.com/clockworkpi/apt/main/debian/KEY.gpg" >"$rootpath/etc/apt/trusted.gpg.d/clockworkpi.asc"
+	echo "Installing ClockworkPi apt repo"
+	echo "deb https://raw.githubusercontent.com/clockworkpi/apt/main/debian/ stable main" >"$rootpath/etc/apt/sources.list.d/clockworkpi.list"
+	echo "Configuring X11 screen rotation"
+	echo "xrandr --output DSI-1 --rotate right" >"$rootpath/etc/X11/Xsession.d/100custom_xrandr"
+	echo "Configuring LightDM screen rotation"
+	sed -i '/^#greeter-setup-script=/c\greeter-setup-script=/etc/lightdm/setup.sh' "$rootpath/etc/lightdm/lightdm.conf"
+	echo "xrandr --output DSI-1 --rotate right" >"$rootpath/etc/lightdm/setup.sh"
+	echo "exit 0" >>"$rootpath/etc/lightdm/setup.sh"
+	chmod +x "$rootpath/etc/lightdm/setup.sh"
+	echo "Entering chroot"
+	chroot "$rootpath" /bin/bash -euo pipefail <<EOF
+		echo "Installing ClockworkPi packages"
+		DEBIAN_FRONTEND=noninteractive apt-get -qq update
+		DEBIAN_FRONTEND=noninteractive apt-get -qq install devterm-thermal-printer-cm4 devterm-thermal-printer-cups devterm-fan-temp-daemon-cm4 devterm-kernel-cm4-rpi devterm-audio-patch devterm-wiringpi-cm4-cpi
+		echo "Leaving chroot"
+EOF
+	# Somehow apt starts cupsd from inside the chroot. I don't know how, this feels like a bug.
+	pgrep "cupsd" >/dev/null && killall -2 cupsd
+	echo "Configuring console screen rotation"
+	sed -i '1s/$/ fbcon=rotate:1/' "$rootpath/boot/cmdline.txt"
+	echo "Removing bind mounts"
+	umount "$rootpath/dev/pts"
+	umount "$rootpath/dev/"
+	umount "$rootpath/sys/"
+	umount "$rootpath/proc/"
+}
+
+if [[ "$(uname -m)" != "aarch64" ]]; then
+	echo "This only works on aarch64." >&2
+	exit 1
+fi
+
+if [[ "$(whoami)" != "root" ]]; then
+	echo "You need to run this script as root." >&2
+	exit 1
+fi
+
+which apt-get >/dev/null
+if [[ $? -ne 0 ]]; then
+	echo "You need to run this on a Debian-like system, like Debian itself or Raspberry Pi OS." >&2
+	exit 1
+fi
+
+echo -n "Creating working directory: "
+workdir="$(mktemp -d --tmpdir makecm4devterm.XXXXXX)"
+echo "$workdir"
+
+if [[ -f "$1" ]]; then
+	src="$1"
+else
+	echo "Downloading image"
+	wget --progress=bar "$1" -O "$workdir/pi.xz"
+	src="$workdir/pi.xz"
+fi
+
+echo "Decompressing image"
+xz -dc "$src" >"$workdir/devterm.img"
+
+echo "Mounting image"
+losetup -fP "$workdir/devterm.img"
+
+echo "Checking partitions on image"
+mkdir -p "$workdir/mount/boot"
+for n in {1..3}; do
+	if [[ -b /dev/loop0p$n ]]; then
+		mkdir -p "$workdir/loop0p$n"
+		mount /dev/loop0p$n "$workdir/loop0p$n"
+		if [ -f "$workdir/loop0p$n/cmdline.txt" ]; then
+			echo "Found boot partition"
+			bootp="$workdir/loop0p$n" 
+		fi
+		if [ -f "$workdir/loop0p$n/etc/fstab" ]; then
+			echo "Found root partition"
+			rootp="$workdir/loop0p$n"
+		fi
+	fi
+done
+mount --bind "$rootp" "$workdir/mount"
+mount --bind "$bootp" "$workdir/mount/boot"
+processroot "$workdir/mount"
+umount "$workdir/mount/boot"
+umount "$workdir/mount"
+umount "$workdir/loop0p"*
+
+echo "Unmounting image"
+losetup -D /dev/loop0
+
+echo "Cleaning up"
+rm -rf "$workdir/mount"
+rm -rf "$workdir/loop0p"*
+
+echo "Complete. Image is at:"
+echo "$workdir/devterm.img"
